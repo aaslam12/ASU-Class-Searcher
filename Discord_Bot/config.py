@@ -2,9 +2,6 @@
 # Modify this constant to change how often the bot checks for open classes
 CHECK_INTERVAL_MINUTES = 5
 
-# Command prefix for bot commands
-COMMAND_PREFIX = "!"
-
 # Path to the JSON file that stores class tracking requests
 PERSISTENCE_FILE = "class_requests.json"
 

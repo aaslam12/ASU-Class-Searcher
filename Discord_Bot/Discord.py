@@ -3,35 +3,36 @@ ASU Class Searcher Discord Bot - Refactored Version
 Monitors ASU class availability and notifies users when spots open up.
 """
 
-import discord
-from discord.ext import commands, tasks
 import asyncio
-import pandas as pd
 import json
-import requests
-import re
 import logging
+import re
 from datetime import datetime
 from typing import Optional
 
-# Selenium imports for web scraping
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-
-# Local imports
-from token_disc import TOKEN
+import discord
+import pandas as pd
+import persistence
+import requests
 from config import (
-    CHECK_INTERVAL_MINUTES,
-    COMMAND_PREFIX,
     ASU_API_URL,
     ASU_SEARCH_URL,
     CHECK_DELAY_SECONDS,
+    CHECK_INTERVAL_MINUTES,
     MAX_REQUESTS_PER_USER,
 )
-import persistence
+from discord import app_commands
+from discord.ext import commands, tasks
+
+# Selenium imports for web scraping
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
+
+# Local imports
+from token_disc import TOKEN
 
 # Setup logging
 logging.basicConfig(
@@ -39,9 +40,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger("ASU_Bot")
 
-# Initialize Discord bot
-intents = discord.Intents.all()
-bot = commands.Bot(command_prefix=COMMAND_PREFIX, intents=intents)
+# Initialize Discord bot (optimized for slash commands only)
+intents = discord.Intents.default()
+intents.message_content = False  # Not needed for slash commands
+bot = commands.Bot(command_prefix=commands.when_mentioned, intents=intents)
+bot.remove_command("help")  # Remove default help command
 
 # Track bot start time for uptime calculation
 bot_start_time = None
@@ -257,6 +260,14 @@ async def on_ready():
     logger.info(f"Bot logged in as {bot.user}")
     logger.info(f"Connected to {len(bot.guilds)} server(s)")
 
+    # sync app commands all guilds
+    try:
+        for guild in bot.guilds:
+            synced = await bot.tree.sync(guild=guild)
+            logger.info(f"Synced {len(synced)} commands to guild: {guild.name}")
+    except Exception as e:
+        logger.error(f"Failed to sync app commands: {e}")
+
     # Start the background checker
     if not background_checker.is_running():
         background_checker.start()
@@ -265,155 +276,92 @@ async def on_ready():
         )
 
 
-@bot.event
-async def on_command_error(ctx, error):
-    """
-    Global error handler for all bot commands.
-    Sends helpful error messages to Discord.
-    """
-    # original exception
-    if hasattr(ctx, "command") and ctx.command is None:
-        return
-
-    error = getattr(error, "original", error)
-
-    # missing arguments
-    if isinstance(error, commands.MissingRequiredArgument):
-        await send_command_error(
-            ctx,
-            f"❌ Missing argument: `{error.param.name}`",
-            get_command_help(ctx.command.name if ctx.command else "unknown"),
+@bot.tree.error
+async def on_app_command_error(
+    interaction: discord.Interaction, error: app_commands.AppCommandError
+):
+    logger.error(f"Slash command error: {error}")
+    try:
+        await interaction.response.send_message(
+            f"❌ An error occurred: {error}", ephemeral=True
         )
-
-    # too many arguments
-    elif isinstance(error, commands.TooManyArguments):
-        await send_command_error(
-            ctx,
-            "❌ Too many arguments provided",
-            get_command_help(ctx.command.name if ctx.command else "unknown"),
-        )
-
-    # bad argument type
-    elif isinstance(error, commands.BadArgument):
-        await send_command_error(
-            ctx,
-            f"❌ Invalid argument: {str(error)}",
-            get_command_help(ctx.command.name if ctx.command else "unknown"),
-        )
-
-    # command not found
-    elif isinstance(error, commands.CommandNotFound):
-        cmd = ctx.message.content.split()[0]
-        await ctx.send(
-            f"❌ Command `{cmd}` not found.\n"
-            f"Use `!helpBot` to see available commands."
-        )
-
-    # other errors
-    else:
-        logger.error(f"Unhandled error in command {ctx.command}: {error}")
-        await send_command_error(
-            ctx,
-            f"❌ An error occurred: {str(error)}",
-            "Please check the command format or try again.",
+    except discord.InteractionResponded:
+        await interaction.followup.send(
+            f"❌ An error occurred: {error}", ephemeral=True
         )
 
 
-async def send_command_error(ctx, error_msg: str, help_text: str):
-    """
-    Send a formatted error embed to Discord.
-
-    Args:
-        ctx: Command context
-        error_msg: Error message to display
-        help_text: Help text or command usage
-    """
+async def send_interaction_error(
+    interaction: discord.Interaction, error_msg: str, help_text: str = ""
+):
+    """send a formatted error embed to Discord for slash commands."""
     embed = discord.Embed(
         title="⚠️ Command Error", description=error_msg, color=0xFF0000  # Red
     )
-    embed.add_field(name="How to use:", value=help_text, inline=False)
-    embed.set_footer(text="Use !helpBot for more information")
-    await ctx.send(embed=embed)
+    if help_text:
+        embed.add_field(name="How to use:", value=help_text, inline=False)
+    embed.set_footer(text="Use /helpbot for more information")
+    try:
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+    except discord.InteractionResponded:
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
 
-def get_command_help(command_name: str) -> str:
-    """Get help text for a specific command."""
-    help_dict = {
-        "checkclass": "`!checkClass <classNumber> <subject> [term]`\n"
-        "Example: `!checkClass 205 CSE` or `!checkClass 205 CSE 2261`\n"
-        "• classNumber: Catalog number (e.g., 205)\n"
-        "• subject: Subject code (e.g., CSE, MAT, ENG)\n"
-        "• term: Academic term (optional, defaults to 2261)\n"
-        "  Examples: 2261 (Spring 2025), 2264 (Summer 2026), 2267 (Fall 2026)",
-        "checkcourse": "`!checkCourse <courseID> [term]`\n"
-        "Example: `!checkCourse 12345` or `!checkCourse 12345 2261`\n"
-        "• courseID: Course ID number\n"
-        "• term: Academic term (optional, defaults to 2261)",
-        "myrequests": "`!myRequests`\n" "Shows all your active tracking requests.",
-        "removerequest": "`!removeRequest <index>`\n"
-        "Example: `!removeRequest 0`\n"
-        "• index: Request index from !myRequests\n"
-        "Use `!myRequests` to see available indices.",
-        "stopchecking": "`!stopChecking`\n" "Removes ALL your tracking requests.",
-        "status": "`!status`\n" "Shows bot statistics and status.",
-        "listall": "`!listAll`\n" "Shows all active requests from all users.",
-        "helpbot": "`!helpBot`\n" "Displays all available commands and usage.",
-    }
-    return help_dict.get(command_name.lower(), "Use `!helpBot` for command list.")
-
-
-@bot.command()
-async def helpBot(ctx):
+@bot.tree.command(
+    name="helpbot",
+    description="Display comprehensive help information about bot commands",
+)
+async def helpBot(interaction: discord.Interaction):
     """Display comprehensive help information about bot commands."""
     embed = discord.Embed(
         title="🎓 ASU Class Searcher Bot - Help",
         description="Track ASU class availability and get notified when spots open up!",
-        color=0x8C1D40,  # ASU Maroon
+        color=0x8C1D40,  # maroon
     )
 
     embed.add_field(
-        name="📚 !checkClass <num> <subject> [term]",
+        name="/checkclass <num> <subject> [term]",
         value="Track a class by number and subject.\n"
         "Examples:\n"
-        "  `!checkClass 205 CSE` (uses default term 2261)\n"
-        "  `!checkClass 205 CSE 2261` (Spring 2026)\n"
+        "  `/checkclass 205 CSE` (uses default term 2261)\n"
+        "  `/checkclass 205 CSE 2261` (Spring 2026)\n"
         "Term defaults to 2261 if not provided",
         inline=False,
     )
 
     embed.add_field(
-        name="🔍 !checkCourse <courseID> [term]",
+        name="/checkcourse <courseID> [term]",
         value="Track a course by ID number.\n"
         "Examples:\n"
-        "  `!checkCourse 12345` (uses default term 2261)\n"
-        "  `!checkCourse 12345 2261` (Spring 2026)\n"
+        "  `/checkcourse 12345` (uses default term 2261)\n"
+        "  `/checkcourse 12345 2261` (Spring 2026)\n"
         "Term defaults to 2261 if not provided",
         inline=False,
     )
 
     embed.add_field(
-        name="📋 !myRequests",
+        name="/myrequests",
         value="View all your active tracking requests",
         inline=False,
     )
 
     embed.add_field(
-        name="🗑️ !removeRequest <index>",
+        name="/removerequest <index>",
         value="Remove one of your tracking requests by index.\n"
-        "Use `!myRequests` to see indices",
+        "Use `/myrequests` to see indices",
         inline=False,
     )
 
     embed.add_field(
-        name="🛑 !stopChecking", value="Remove ALL your tracking requests", inline=False
+        name="/stopchecking", value="Remove ALL your tracking requests", inline=False
     )
 
     embed.add_field(
-        name="📊 !status", value="Show bot status and statistics", inline=False
+        name="/status", value="Show bot status and statistics", inline=False
     )
 
     embed.add_field(
-        name="📖 !listAll",
+        name="/listall",
         value="View all active tracking requests (all users)",
         inline=False,
     )
@@ -422,54 +370,56 @@ async def helpBot(ctx):
         text=f"Bot checks every {CHECK_INTERVAL_MINUTES} minutes • Max {MAX_REQUESTS_PER_USER} requests per user"
     )
 
-    await ctx.send(embed=embed)
+    await interaction.response.send_message(embed=embed)
 
 
-@bot.command()
-async def checkClass(ctx, class_num: str, class_subject: str, term: str = "2261"):
-    """
-    Start tracking a class for availability.
+@bot.tree.command(name="checkclass", description="Track a class by number and subject")
+@app_commands.describe(
+    class_num="Class catalog number (e.g., 205)",
+    class_subject="Class subject code (e.g., CSE, MAT, ENG)",
+    term="Academic term (default: 2261)",
+)
+async def checkClass(
+    interaction: discord.Interaction,
+    class_num: str,
+    class_subject: str,
+    term: str = "2261",
+):
+    """Start tracking a class for availability."""
+    await interaction.response.defer(thinking=True)
 
-    Args:
-        class_num: Class catalog number (e.g., '205')
-        class_subject: Class subject code (e.g., 'CSE')
-        term: Academic term (e.g., '2261') - defaults to 2261 if not provided
-    """
-    user_id = ctx.author.id
-    username = str(ctx.author)
-    channel_id = ctx.channel.id
+    user_id = interaction.user.id
+    username = str(interaction.user)
+    channel_id = interaction.channel.id
 
     # Validate inputs
     if not class_num or not class_num.replace(".", "", 1).isdigit():
-        await send_command_error(
-            ctx,
+        await send_interaction_error(
+            interaction,
             "❌ Class number must be numeric (e.g., 205 or 112.5)",
-            get_command_help("checkclass"),
         )
         return
 
     if not class_subject or len(class_subject) > 6:
-        await send_command_error(
-            ctx,
+        await send_interaction_error(
+            interaction,
             "❌ Subject must be a valid code (e.g., CSE, MAT, ENG)",
-            get_command_help("checkclass"),
         )
         return
 
     if not term or len(term) != 4 or not term.isdigit():
-        await send_command_error(
-            ctx,
+        await send_interaction_error(
+            interaction,
             "❌ Term must be 4 digits (e.g., 2261 for Spring 2026)",
-            get_command_help("checkclass"),
         )
         return
 
     # Check if user has reached request limit
     current_count = persistence.count_user_requests(user_id)
     if current_count >= MAX_REQUESTS_PER_USER:
-        await ctx.send(
+        await interaction.followup.send(
             f"❌ You've reached the limit of {MAX_REQUESTS_PER_USER} tracking requests. "
-            f"Remove some with `!removeRequest` or `!stopChecking`."
+            f"Remove some with `/removerequest` or `/stopchecking`."
         )
         return
 
@@ -485,7 +435,7 @@ async def checkClass(ctx, class_num: str, class_subject: str, term: str = "2261"
     )
 
     if request_id:
-        await ctx.send(
+        await interaction.followup.send(
             f"✅ Now tracking **{class_subject.upper()} {class_num}** (Term: {term})\n"
             f"You'll be notified here when spots become available.\n"
             f"_Checking every {CHECK_INTERVAL_MINUTES} minutes_"
@@ -494,45 +444,48 @@ async def checkClass(ctx, class_num: str, class_subject: str, term: str = "2261"
             f"User {username} added class tracking: {class_subject} {class_num}"
         )
     else:
-        await ctx.send("❌ Failed to add tracking request. Please try again.")
+        await interaction.followup.send(
+            "❌ Failed to add tracking request. Please try again."
+        )
 
 
-@bot.command()
-async def checkCourse(ctx, course_id: str, term: str = "2261"):
-    """
-    Start tracking a course by ID for availability.
+@bot.tree.command(
+    name="checkcourse", description="Track a course by ID for availability"
+)
+@app_commands.describe(
+    course_id="Course ID number (e.g., 12345)", term="Academic term (default: 2261)"
+)
+async def checkCourse(
+    interaction: discord.Interaction, course_id: str, term: str = "2261"
+):
+    """Start tracking a course by ID for availability."""
+    await interaction.response.defer(thinking=True)
 
-    Args:
-        course_id: Course ID number
-        term: Academic term (e.g., '2261') - defaults to 2261 if not provided
-    """
-    user_id = ctx.author.id
-    username = str(ctx.author)
-    channel_id = ctx.channel.id
+    user_id = interaction.user.id
+    username = str(interaction.user)
+    channel_id = interaction.channel.id
 
     # Validate inputs
     if not course_id or not course_id.isdigit():
-        await send_command_error(
-            ctx,
+        await send_interaction_error(
+            interaction,
             "❌ Course ID must be numeric (e.g., 12345)",
-            get_command_help("checkcourse"),
         )
         return
 
     if not term or len(term) != 4 or not term.isdigit():
-        await send_command_error(
-            ctx,
+        await send_interaction_error(
+            interaction,
             "❌ Term must be 4 digits (e.g., 2261 for Spring 2026)",
-            get_command_help("checkcourse"),
         )
         return
 
     # Check if user has reached request limit
     current_count = persistence.count_user_requests(user_id)
     if current_count >= MAX_REQUESTS_PER_USER:
-        await ctx.send(
+        await interaction.followup.send(
             f"❌ You've reached the limit of {MAX_REQUESTS_PER_USER} tracking requests. "
-            f"Remove some with `!removeRequest` or `!stopChecking`."
+            f"Remove some with `/removerequest` or `/stopchecking`."
         )
         return
 
@@ -547,26 +500,30 @@ async def checkCourse(ctx, course_id: str, term: str = "2261"):
     )
 
     if request_id:
-        await ctx.send(
+        await interaction.followup.send(
             f"✅ Now tracking **Course ID: {course_id}** (Term: {term})\n"
             f"You'll be notified here when it becomes available.\n"
             f"_Checking every {CHECK_INTERVAL_MINUTES} minutes_"
         )
         logger.info(f"User {username} added course tracking: {course_id}")
     else:
-        await ctx.send("❌ Failed to add tracking request. Please try again.")
+        await interaction.followup.send(
+            "❌ Failed to add tracking request. Please try again."
+        )
 
 
-@bot.command()
-async def myRequests(ctx):
+@bot.tree.command(
+    name="myrequests", description="Show all tracking requests for the current user"
+)
+async def myRequests(interaction: discord.Interaction):
     """Show all tracking requests for the current user."""
-    user_id = ctx.author.id
+    user_id = interaction.user.id
     requests = persistence.get_user_requests(user_id)
 
     if not requests:
-        await ctx.send(
+        await interaction.response.send_message(
             "📭 You have no active tracking requests.\n"
-            "Use `!checkClass` or `!checkCourse` to add some!"
+            "Use `/checkclass` or `/checkcourse` to add some!"
         )
         return
 
@@ -589,38 +546,29 @@ async def myRequests(ctx):
 
         embed.add_field(name=name, value=value, inline=False)
 
-    embed.set_footer(text=f"Use !removeRequest <index> to remove a request")
+    embed.set_footer(text=f"Use /removerequest <index> to remove a request")
 
-    await ctx.send(embed=embed)
+    await interaction.response.send_message(embed=embed)
 
 
-@bot.command()
-async def removeRequest(ctx, index: int = None):
-    """
-    Remove a specific tracking request by index.
-
-    Args:
-        index: The index of the request (from !myRequests)
-    """
-    user_id = ctx.author.id
+@bot.tree.command(
+    name="removerequest", description="Remove a specific tracking request by index"
+)
+@app_commands.describe(index="The index of the request (from /myrequests)")
+async def removeRequest(interaction: discord.Interaction, index: int):
+    """Remove a specific tracking request by index."""
+    user_id = interaction.user.id
     requests = persistence.get_user_requests(user_id)
 
-    # Validate input
-    if index is None:
-        await send_command_error(
-            ctx,
-            "❌ You must provide an index number",
-            get_command_help("removerequest"),
+    if not requests:
+        await interaction.response.send_message(
+            "📭 You have no active tracking requests to remove."
         )
         return
 
-    if not requests:
-        await ctx.send("📭 You have no active tracking requests to remove.")
-        return
-
     if index < 0 or index >= len(requests):
-        await ctx.send(
-            f"❌ Invalid index. Use `!myRequests` to see valid indices (0-{len(requests)-1})."
+        await interaction.response.send_message(
+            f"❌ Invalid index. Use `/myrequests` to see valid indices (0-{len(requests)-1})."
         )
         return
 
@@ -635,32 +583,44 @@ async def removeRequest(ctx, index: int = None):
         else:
             desc = f"Course ID: {request_to_remove['course_id']}"
 
-        await ctx.send(f"✅ Removed tracking request: **{desc}**")
-        logger.info(f"User {ctx.author} removed request: {desc}")
+        await interaction.response.send_message(
+            f"✅ Removed tracking request: **{desc}**"
+        )
+        logger.info(f"User {interaction.user} removed request: {desc}")
     else:
-        await ctx.send("❌ Failed to remove request. Please try again.")
+        await interaction.response.send_message(
+            "❌ Failed to remove request. Please try again."
+        )
 
 
-@bot.command()
-async def stopChecking(ctx):
+@bot.tree.command(
+    name="stopchecking", description="Remove ALL tracking requests for the current user"
+)
+async def stopChecking(interaction: discord.Interaction):
     """Remove ALL tracking requests for the current user."""
-    user_id = ctx.author.id
+    user_id = interaction.user.id
     count = persistence.remove_user_requests(user_id)
 
     if count > 0:
-        await ctx.send(f"✅ Removed all **{count}** tracking request(s).")
-        logger.info(f"User {ctx.author} removed all {count} requests")
+        await interaction.response.send_message(
+            f"✅ Removed all **{count}** tracking request(s)."
+        )
+        logger.info(f"User {interaction.user} removed all {count} requests")
     else:
-        await ctx.send("📭 You have no active tracking requests.")
+        await interaction.response.send_message(
+            "📭 You have no active tracking requests."
+        )
 
 
-@bot.command()
-async def listAll(ctx):
+@bot.tree.command(
+    name="listall", description="Show all active tracking requests from all users"
+)
+async def listAll(interaction: discord.Interaction):
     """Show all active tracking requests from all users."""
     requests = persistence.load_requests()
 
     if not requests:
-        await ctx.send("📭 No active tracking requests.")
+        await interaction.response.send_message("📭 No active tracking requests.")
         return
 
     embed = discord.Embed(
@@ -692,11 +652,11 @@ async def listAll(ctx):
             name=f"{username} ({len(user_reqs)})", value=value, inline=False
         )
 
-    await ctx.send(embed=embed)
+    await interaction.response.send_message(embed=embed)
 
 
-@bot.command()
-async def status(ctx):
+@bot.tree.command(name="status", description="Show bot status and statistics")
+async def status(interaction: discord.Interaction):
     """Show bot status and statistics."""
     requests = persistence.load_requests()
 
@@ -723,7 +683,7 @@ async def status(ctx):
         inline=True,
     )
 
-    await ctx.send(embed=embed)
+    await interaction.response.send_message(embed=embed)
 
 
 # Run the bot

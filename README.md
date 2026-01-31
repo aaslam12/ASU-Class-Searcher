@@ -77,22 +77,22 @@ chromedriver --version
 
 ### 5. Configure Discord Bot Token
 1. Create a Discord bot at [Discord Developer Portal](https://discord.com/developers/applications)
-2. Enable all **Privileged Gateway Intents** (Presence, Server Members, Message Content)
-3. Create `Discord_Bot/token_disc.py`:
+2. Create `Discord_Bot/token_disc.py`:
 ```python
 TOKEN = 'your-bot-token-here'
 ```
 
 ⚠️ **Important:** Never commit `token_disc.py` to version control!
 
-### 6. Invite Bot to Your Server
-In the OAuth page, generate an invite link with these permissions:
-Scopes:
-- bot
+3. In the OAuth page, generate an invite link with these permissions:
 
-Permissions:
+**Scopes:**
+- `bot`
+- `applications.commands` (REQUIRED for slash commands)
+
+**Bot Permissions:**
 - Send Messages
-- Read Message History
+- Embed Links
 - View Channels
 
 ## Running the Bot
@@ -107,63 +107,60 @@ This launches the startup menu where you can:
 2. Clear all tracking requests
 3. Start the bot
 
-All tracking management is done through Discord commands once the bot is running.
+All tracking management is done through Discord slash commands once the bot is running.
 
 ### Direct Start (Skip Menu)
 ```bash
-python Discord_new.py
+python Discord.py
 ```
 
 ## Bot Commands
 
+All commands are **slash commands** (type `/` in Discord to see them).
+
 ### Core Commands
 
-**`!helpBot`**
+**`/helpbot`**
 Display comprehensive help with all available commands and examples.
 
-**`!checkClass <number> <subject> [term]`**
+**`/checkclass <number> <subject> [term]`**
 Track a class by catalog number and subject.
-- Example: `!checkClass 205 CSE` (uses default term 2261)
-- Example: `!checkClass 205 CSE 2241` (Spring 2024)
+- Example: `/checkclass 205 CSE` (uses default term 2261)
+- Example: `/checkclass 205 CSE 2241` (Spring 2024)
 - Term is optional and defaults to 2261 if not provided
 
-**`!checkCourse <courseID> [term]`**
+**`/checkcourse <courseID> [term]`**
 Track a course by its unique ID number.
-- Example: `!checkCourse 12345` (uses default term 2261)
-- Example: `!checkCourse 12345 2241` (Spring 2024)
+- Example: `/checkcourse 12345` (uses default term 2261)
+- Example: `/checkcourse 12345 2241` (Spring 2024)
 - Term is optional and defaults to 2261 if not provided
 
-**`!myRequests`**
+**`/myrequests`**
 View all your active tracking requests with details.
 
-**`!removeRequest <index>`**
+**`/removerequest <index>`**
 Remove a specific tracking request by index.
-- Use `!myRequests` to see indices
-- Example: `!removeRequest 0`
+- Use `/myrequests` to see indices
+- Example: `/removerequest 0`
 
-**`!stopChecking`**
+**`/stopchecking`**
 Remove ALL your tracking requests at once.
 
 ### Information Commands
 
-**`!status`**
+**`/status`**
 Show bot status including:
 - Uptime
 - Active tracking requests
 - Check interval
 - Background task status
 
+**`/listall`**
+View all tracking requests from all users
+
 ## Configuration
 
-### Modify Check Interval
-Edit `Discord_Bot/config.py`:
-```python
-# Change from 5 minutes to any value you prefer
-CHECK_INTERVAL_MINUTES = 5
-```
-
-### Other Configurable Settings
-- `COMMAND_PREFIX`: Bot command prefix (default: `!`)
+- `CHECK_INTERVAL_MINUTES`: Fixed interval to check class openings (default: 5)
 - `MAX_REQUESTS_PER_USER`: Maximum tracking requests per user (default: 10)
 - `PERSISTENCE_FILE`: Location of tracking data JSON file
 
