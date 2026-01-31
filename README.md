@@ -30,11 +30,6 @@ All dependencies are listed in `requirements.txt`:
 ## Installation & Setup
 
 ### 1. Clone the Repository
-```bash
-git clone <repository-url>
-cd ASU-Class-Searcher
-```
-
 ### 2. Set Up Python Virtual Environment
 ```bash
 python3 -m venv venv
