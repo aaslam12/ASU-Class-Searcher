@@ -5,7 +5,8 @@ import logging
 from startup_menu import run_startup_menu
 
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger("Main")
 
@@ -19,7 +20,7 @@ def main():
             sys.exit(0)
 
         logger.info("Importing Discord bot...")
-        from Discord import bot, TOKEN, logger as bot_logger
+        from bot import bot, TOKEN, logger as bot_logger
 
         bot_logger.info("Starting ASU Class Searcher Bot...")
         bot.run(TOKEN)

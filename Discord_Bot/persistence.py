@@ -1,12 +1,10 @@
-"""
-Responsible for managing the persistence of the requests if the bot restarts/shuts down. Saves the requests in a JSON file.
-"""
+"""Persistence layer for tracking requests. Saves data to JSON file."""
 
 import json
 import os
-from datetime import datetime
-from typing import List, Dict, Optional
 import uuid
+from datetime import datetime
+from typing import Dict, List, Optional
 
 from config import PERSISTENCE_FILE
 
@@ -19,19 +17,16 @@ def load_requests() -> List[Dict]:
         with open(PERSISTENCE_FILE, "r") as f:
             data = json.load(f)
             return data.get("requests", [])
-    except (json.JSONDecodeError, IOError) as e:
-        print(f"Error loading requests: {e}")
+    except (json.JSONDecodeError, IOError):
         return []
 
 
 def save_requests(requests: List[Dict]) -> bool:
     try:
-        data = {"requests": requests}
         with open(PERSISTENCE_FILE, "w") as f:
-            json.dump(data, f, indent=2)
+            json.dump({"requests": requests}, f, indent=2)
         return True
-    except IOError as e:
-        print(f"Error saving requests: {e}")
+    except IOError:
         return False
 
 
@@ -44,21 +39,11 @@ def add_request(
     class_subject: str = None,
     course_id: str = None,
     term: str = None,
+    class_title: str = None,
+    class_details: dict = None,
 ) -> Optional[str]:
-    """
-    request_type: Type of request
-    user_id: Discord user ID
-    username: Discord username
-    channel_id: Discord channel ID where notifications should be sent
-    class_num: Class number
-    class_subject: Class subject
-    course_id: Course ID
-    term: Academic term
-
-    returns the request ID if successful, None otherwise
-    """
+    """Add a new tracking request. Returns request ID if successful."""
     requests = load_requests()
-
     request_id = str(uuid.uuid4())
 
     new_request = {
@@ -74,22 +59,48 @@ def add_request(
     }
 
     if request_type == "class":
-        new_request["class_num"] = class_num
-        new_request["class_subject"] = class_subject
+        new_request.update(
+            {
+                "class_num": class_num,
+                "class_subject": class_subject,
+                "class_title": class_title or "Unknown",
+            }
+        )
+        if class_details:
+            new_request.update(
+                {
+                    "instructor": class_details.get("instructor", "TBA"),
+                    "days": class_details.get("days", "TBA"),
+                    "time": class_details.get("time", "TBA"),
+                    "location": class_details.get("location", "TBA"),
+                }
+            )
+
     elif request_type == "course":
-        new_request["course_id"] = course_id
+        new_request.update(
+            {
+                "course_id": course_id,
+                "course_title": class_title or "Unknown",
+            }
+        )
+        if class_details:
+            new_request.update(
+                {
+                    "instructor": class_details.get("instructor", "TBA"),
+                    "days": class_details.get("days", "TBA"),
+                    "time": class_details.get("time", "TBA"),
+                    "location": class_details.get("location", "TBA"),
+                }
+            )
 
     requests.append(new_request)
-
-    if save_requests(requests):
-        return request_id
-    return None
+    return request_id if save_requests(requests) else None
 
 
 def remove_request(request_id: str) -> bool:
+    """Remove a request by ID."""
     requests = load_requests()
     original_length = len(requests)
-
     requests = [r for r in requests if r["id"] != request_id]
 
     if len(requests) < original_length:
@@ -98,48 +109,61 @@ def remove_request(request_id: str) -> bool:
 
 
 def remove_user_requests(user_id: int) -> int:
-    """
-    Remove all tracking requests for a specific user.
-    Returns the number of requests removed
-    """
+    """Remove all requests for a user. Returns count removed."""
     requests = load_requests()
     original_length = len(requests)
-
     requests = [r for r in requests if r["user_id"] != user_id]
 
     removed_count = original_length - len(requests)
     if removed_count > 0:
         save_requests(requests)
-
     return removed_count
 
 
 def get_user_requests(user_id: int) -> List[Dict]:
+    """Get all requests for a specific user."""
+    return [r for r in load_requests() if r["user_id"] == user_id]
+
+
+def count_user_requests(user_id: int) -> int:
+    """Count requests for a specific user."""
+    return len(get_user_requests(user_id))
+
+
+def update_request(request_id: str, updates: Dict) -> bool:
+    """Update fields on a request."""
     requests = load_requests()
-    return [r for r in requests if r["user_id"] == user_id]
-
-
-def update_request_timestamps(
-    request_id: str, last_checked: bool = False, last_notified: bool = False
-) -> bool:
-    """
-    Update timestamp fields for a request.
-
-    Returns true if successful, false otherwise
-    """
-    requests = load_requests()
-    current_time = datetime.utcnow().isoformat() + "Z"
 
     for request in requests:
         if request["id"] == request_id:
-            if last_checked:
-                request["last_checked"] = current_time
-            if last_notified:
-                request["last_notified"] = current_time
+            request.update(updates)
             return save_requests(requests)
 
     return False
 
 
-def count_user_requests(user_id: int) -> int:
-    return len(get_user_requests(user_id))
+def is_duplicate_request(
+    user_id: int,
+    request_type: str,
+    class_num: str = None,
+    class_subject: str = None,
+    course_id: str = None,
+    term: str = None,
+) -> bool:
+    """Check if user already has an identical tracking request."""
+    for request in get_user_requests(user_id):
+        if request["type"] != request_type or request["term"] != term:
+            continue
+
+        if request_type == "class":
+            if (
+                request.get("class_num") == class_num
+                and request.get("class_subject") == class_subject
+            ):
+                return True
+
+        elif request_type == "course":
+            if request.get("course_id") == course_id:
+                return True
+
+    return False

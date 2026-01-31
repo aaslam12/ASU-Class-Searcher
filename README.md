@@ -135,6 +135,14 @@ Track a course by its unique ID number.
 - Example: `/checkcourse 12345 2241` (Spring 2024)
 - Term is optional and defaults to 2261 if not provided
 
+**`/searchclass <subject> [term] [limit]`**
+Search for available classes by subject code.
+- Example: `/searchclass CSE` (searches CSE classes for term 2261)
+- Example: `/searchclass MAT 2261` (searches MAT classes for Spring 2026)
+- Example: `/searchclass ENG 2261 15` (show up to 15 results)
+- Shows class numbers, titles, and seat availability
+- Helps you find classes before tracking them
+
 **`/myrequests`**
 View all your active tracking requests with details.
 
@@ -175,7 +183,7 @@ Common term codes for reference:
 - **2264**: Summer 2026
 - **2267**: Fall 2026
 
-Format: The leading number is the Semester `1` (Spring) / `4` (Summer) / `7` (Fall) and the two number before it is the year. For example the number `2174` would be Fall 2017 because:
+Format: The last number is the Semester `1` (Spring) / `4` (Summer) / `7` (Fall) and the three numbers before it is the year. For example the number `2174` would be Fall 2017 because:
 ```
 21: 2017
     ^ ^
