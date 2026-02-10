@@ -15,10 +15,14 @@ This Discord bot monitors ASU course and class availability in real-time. It aut
 ## How It Works
 
 ### Architecture Overview
-1. **Startup Menu** (`startup_menu.py`): Simple CLI to view tracked classes before bot starts
-2. **Persistence Layer** (`persistence.py`): JSON-based storage for tracking requests
-3. **Bot Core** (`Discord_new.py`): Discord bot with commands and background checker
-4. **Configuration** (`config.py`): Centralized settings
+1. **Entry Point** (`main.py`): Handles startup menu and bot initialization.
+2. **Bot Core** (`bot.py`): Discord bot logic, event handling, and background tasks.
+3. **API Layer** (`asu_api.py`): Handles all interactions with ASU services:
+   - **Catalog API**: Primary method for checking class details and availability (fast, reliable).
+   - **Selenium/Headless Chrome**: Secondary method for specific course checks that require DOM parsing.
+4. **Persistence** (`persistence.py`): JSON-based storage for tracking requests.
+5. **Commands** (`commands.py`): Definition and logic for all Discord slash commands.
+6. **Configuration** (`config.py`): Centralized settings.
 
 ### Background Checking Process
 1. Bot starts and loads all tracking requests from `class_requests.json`
@@ -32,14 +36,14 @@ This Discord bot monitors ASU course and class availability in real-time. It aut
 ## Requirements
 
 ### System Requirements
-- Python 3.7 or higher
+- Python 3.8 or higher
 - Google Chrome browser
 - ChromeDriver (matching your Chrome version)
 - Internet connection
 
 ### Python Dependencies
 All dependencies are listed in `requirements.txt`:
-- discord.py >= 2.0
+- discord.py
 - pandas
 - selenium
 - requests
@@ -47,6 +51,11 @@ All dependencies are listed in `requirements.txt`:
 ## Installation & Setup
 
 ### 1. Clone the Repository
+```bash
+git clone https://github.com/aaslam12/ASU-Class-Searcher.git
+cd ASU-Class-Searcher
+```
+
 ### 2. Set Up Python Virtual Environment
 ```bash
 python3 -m venv venv
@@ -60,15 +69,12 @@ pip install -r requirements.txt
 
 ### 4. Install ChromeDriver
 **Option A: Automatic (Recommended)**
-```bash
-# Selenium 4.6+ can automatically manage ChromeDriver
-# Just ensure Chrome browser is installed
-```
+Selenium 4.6+ can automatically manage ChromeDriver. Just ensure the Google Chrome browser is installed on your system.
 
 **Option B: Manual Installation**
-1. Check your Chrome version: `chrome://version` in Chrome
-2. Download matching ChromeDriver from [ChromeDriver Downloads](https://developer.chrome.com/docs/chromedriver/downloads)
-3. Extract and add to your system PATH
+1. Check your Chrome version: `chrome://version` in Chrome.
+2. Download matching ChromeDriver from [ChromeDriver Downloads](https://developer.chrome.com/docs/chromedriver/downloads).
+3. Extract and add to your system PATH.
 
 **Verify Installation:**
 ```bash
@@ -76,101 +82,91 @@ chromedriver --version
 ```
 
 ### 5. Configure Discord Bot Token
-1. Create a Discord bot at [Discord Developer Portal](https://discord.com/developers/applications)
-2. Create `Discord_Bot/token_disc.py`:
+1. Create a Discord bot at [Discord Developer Portal](https://discord.com/developers/applications).
+2. Create a file named `token_disc.py` inside the `Discord_Bot/` directory:
 ```python
 TOKEN = 'your-bot-token-here'
 ```
-
 ⚠️ **Important:** Never commit `token_disc.py` to version control!
 
 3. In the OAuth page, generate an invite link with these permissions:
-
-**Scopes:**
-- `bot`
-- `applications.commands` (REQUIRED for slash commands)
-
-**Bot Permissions:**
-- Send Messages
-- Embed Links
-- View Channels
+   - **Scopes:** `bot`, `applications.commands`
+   - **Bot Permissions:** Send Messages, Embed Links, View Channels
 
 ## Running the Bot
 
-### Start with Interactive Menu
+### Easy Start (Recommended)
 ```bash
-./run_bot.sh # or run_bot.bat for Windows
+./run_bot.sh
 ```
+(On Windows, use `run_bot.bat`)
 
-This launches the startup menu where you can:
-1. View all tracked classes
-2. Clear all tracking requests
-3. Start the bot
+This script handles virtual environment activation and launches the interactive startup menu.
 
-All tracking management is done through Discord slash commands once the bot is running.
-
-### Direct Start (Skip Menu)
+### Manual Start
 ```bash
-python Discord.py
+source venv/bin/activate
+cd Discord_Bot
+python main.py
 ```
 
 ## Bot Commands
 
 All commands are **slash commands** (type `/` in Discord to see them).
 
-### Core Commands
+### Core Tracking Commands
 
-**`/helpbot`**
-Display comprehensive help with all available commands and examples.
-
-**`/checkclass <number> <subject> [term]`**
-Track a class by catalog number and subject.
+**`/checkclass <class_num> <class_subject> [term]`**
+Track a specific class section by its catalog number and subject. Uses the fast API.
 - Example: `/checkclass 205 CSE` (uses default term 2261)
-- Example: `/checkclass 205 CSE 2241` (Spring 2024)
-- Term is optional and defaults to 2261 if not provided
+- Example: `/checkclass 205 CSE 2267` (Fall 2026)
+- **Parameters:**
+  - `class_num`: The catalog number (e.g., 205, 110).
+  - `class_subject`: The subject code (e.g., CSE, MAT).
+  - `term`: (Optional) The 4-digit term code. Defaults to 2261 (Spring 2026).
 
-**`/checkcourse <courseID> [term]`**
-Track a course by its unique ID number.
-- Example: `/checkcourse 12345` (uses default term 2261)
-- Example: `/checkcourse 12345 2241` (Spring 2024)
-- Term is optional and defaults to 2261 if not provided
+**`/checkcourse <course_id> [term]`**
+Track a course by its unique 5-digit Course ID number. Uses Selenium/Headless Chrome.
+- Example: `/checkcourse 12345`
+- Example: `/checkcourse 85492 2264`
+- **Parameters:**
+  - `course_id`: The 5-digit unique ID.
+  - `term`: (Optional) The 4-digit term code. Defaults to 2261.
 
-**`/searchclass <subject> [term] [limit]`**
-Search for available classes by subject code.
-- Example: `/searchclass CSE` (searches CSE classes for term 2261)
-- Example: `/searchclass MAT 2261` (searches MAT classes for Spring 2026)
-- Example: `/searchclass ENG 2261 15` (show up to 15 results)
-- Shows class numbers, titles, and seat availability
-- Helps you find classes before tracking them
+### Search & Management Commands
+
+**`/searchclass <subject> [course_num] [term]`**
+Search for available classes/sections.
+- Example: `/searchclass CSE` (lists all CSE courses for default term)
+- Example: `/searchclass MAT 205` (lists sections for MAT 205)
+- Example: `/searchclass ENG 101 2267` (lists sections for ENG 101 in Fall 2026)
+- **Parameters:**
+  - `subject`: The subject code (e.g., CSE).
+  - `course_num`: (Optional) Filter by specific course number.
+  - `term`: (Optional) Defaults to 2261.
 
 **`/myrequests`**
-View all your active tracking requests with details.
+View all your active tracking requests with details and their indices.
 
 **`/removerequest <index>`**
-Remove a specific tracking request by index.
-- Use `/myrequests` to see indices
+Remove a specific tracking request by its index (found via `/myrequests`).
 - Example: `/removerequest 0`
 
 **`/stopchecking`**
 Remove ALL your tracking requests at once.
 
-### Information Commands
+**`/listall`**
+View all tracking requests from all users (useful for admins).
 
 **`/status`**
-Show bot status including:
-- Uptime
-- Active tracking requests
-- Check interval
-- Background task status
-
-**`/listall`**
-View all tracking requests from all users
+Show bot uptime, active request count, and check interval.
 
 ## Configuration
 
-- `CHECK_INTERVAL_MINUTES`: Fixed interval to check class openings (default: 5)
-- `MAX_REQUESTS_PER_USER`: Maximum tracking requests per user (default: 10)
-- `PERSISTENCE_FILE`: Location of tracking data JSON file
+Settings are located in `Discord_Bot/config.py`:
+- `CHECK_INTERVAL_MINUTES`: Time between availability checks (default: 5).
+- `MAX_REQUESTS_PER_USER`: Limit on requests per user (default: 10).
+- `PERSISTENCE_FILE`: Name of the JSON file for saving requests.
 
 ## ASU Term Codes
 
@@ -182,6 +178,7 @@ Common term codes for reference:
 - **2261**: Spring 2026 (DEFAULT)
 - **2264**: Summer 2026
 - **2267**: Fall 2026
+- **2257**: Fall 2025
 
 Format: The last number is the Semester `1` (Spring) / `4` (Summer) / `7` (Fall) and the three numbers before it is the year. For example the number `2174` would be Fall 2017 because:
 ```
@@ -194,6 +191,8 @@ Format: The last number is the Semester `1` (Spring) / `4` (Summer) / `7` (Fall)
 and Spring 2022 would be 2221. You get the idea.
 ```
 
+- **Selenium:** Used only for `/checkcourse` to parse dynamic content on the public search page.
+- **User Favorites:** The API endpoint `.../user/favorites/get/class/<term>` exists but is not currently used by this bot.
 
 ## License
 
@@ -203,6 +202,3 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - **Original project**: [Kunj V Patel](https://github.com/KunjVPatel/ASU-Class-Searcher)
 - This version has been extensively refactored and enhanced with persistent storage, automated background checking, improved documentation, error handling, and additional Discord commands.
-- ASU Class Search API
-- Discord.py library
-- Selenium WebDriver
